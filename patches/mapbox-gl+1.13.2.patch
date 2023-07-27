@@ -1,0 +1,61 @@
+diff --git a/node_modules/mapbox-gl/dist/mapbox-gl-dev.js b/node_modules/mapbox-gl/dist/mapbox-gl-dev.js
+index e2d3890..e17eedb 100644
+--- a/node_modules/mapbox-gl/dist/mapbox-gl-dev.js
++++ b/node_modules/mapbox-gl/dist/mapbox-gl-dev.js
+@@ -42166,6 +42166,8 @@ var VectorTileSource = /*@__PURE__*/(function (Evented) {
+         } else if (tile.state === 'loading') {
+             // schedule tile reloading after it has been loaded
+             tile.reloadCallback = callback;
++        } else if (tile.state === 'retry') {
++            tile.request = tile.actor.send('loadTile', params, done.bind(this));
+         } else {
+             tile.request = tile.actor.send('reloadTile', params, done.bind(this));
+         }
+@@ -45593,12 +45595,46 @@ var SourceCache = /*@__PURE__*/(function (Evented) {
+     SourceCache.prototype._tileLoaded = function _tileLoaded (tile      , id        , previousState           , err        ) {
+         if (err) {
+             tile.state = 'errored';
+-            if ((err     ).status !== 404) { this._source.fire(new performance.ErrorEvent(err, {tile: tile})); }
++            if ((err).status !== 404)
++            {
++                // retry if timeout
++                if (err.status === 504)
++                {
++                    if (!tile.retry || tile.retry < 3)
++                    {
++                        tile.state = 'retry';
++                        tile.retry = (tile.retry || 0) + 1;
++
++                        var this$1 = this;
++                        setTimeout(function ()
++                        {
++                            console.log('504 retrying', tile.tileID.canonical);
++
++                            this$1._loadTile(tile, this$1._tileLoaded.bind(this$1, tile, id, tile.state));
++                        }, 3000);
++                    }
++                    else
++                    {
++                        delete tile.retry;
++                        tile.state = 'errored';
++                        this._source.fire(new performance.ErrorEvent(err, { tile: tile }));
++                    }
++                }
++                else
++                {
++                    this._source.fire(new performance.ErrorEvent(err, { tile: tile }));
++                }
++            }
+             // continue to try loading parent/children tiles if a tile doesn't exist (404)
+             else { this.update(this.transform); }
+             return;
+         }
+ 
++        if (previousState === 'retry')
++        {
++            console.log('retry success', tile.tileID.canonical);
++        }
++
+         tile.timeAdded = performance.browser.now();
+         if (previousState === 'expired') { tile.refreshedUponExpiration = true; }
+         this._setTileReloadTimer(id, tile);
